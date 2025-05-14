@@ -1,0 +1,11 @@
+{
+    "name": "image",
+    "compatibility_date": "2025-05-14",
+    "main": "./worker.js",
+    "r2_buckets": [
+        {
+            "binding": "static",
+            "bucket_name": "blog"
+        }
+    ]
+}

@@ -1,0 +1,16 @@
+{
+    "name": "image",
+    "version": "1.0.0",
+    "description": "Cloudflare Worker for uploading files to S3",
+    "main": "worker.js",
+    "scripts": {
+        "deploy": "wrangler deploy",
+        "dev": "wrangler dev"
+    },
+    "dependencies": {
+        "@aws-sdk/client-s3": "^3.0.0"
+    },
+    "devDependencies": {
+        "wrangler": "^4.14.4"
+    }
+}
