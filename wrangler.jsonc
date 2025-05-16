@@ -7,8 +7,5 @@
             "binding": "static",
             "bucket_name": "blog"
         }
-    ],
-    "limits": {
-        "cpu_ms": 500
-    }
+    ]
 }
