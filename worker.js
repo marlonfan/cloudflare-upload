@@ -23,11 +23,11 @@ export default {
         const url = new URL(request.url);
 
         // 处理文件上传
-        async function handleMediaUpload(chatId, fileId, isDocument = false) {
+        async function handleMediaUpload(chatId, fileId, isDocument = false, fileName = null) {
             try {
                 await sendMessage(chatId, '收到文件, 正在上传ing', TELEGRAM_API_URL);
                 const fileUrl = await getFileUrl(fileId, TELEGRAM_BOT_TOKEN);
-                const uploadResult = await uploadImageToR2(fileUrl, env[BUCKET_NAME], isDocument, env);
+                const uploadResult = await uploadImageToR2(fileUrl, env[BUCKET_NAME], isDocument, env, fileName);
 
                 if (uploadResult.ok) {
                     await sendMessage(chatId, uploadResult.message, TELEGRAM_API_URL);
@@ -41,7 +41,7 @@ export default {
         }
 
         // 上传到R2并同步上传S3
-        async function uploadImageToR2(imageUrl, bucket, isDocument = false, env) {
+        async function uploadImageToR2(imageUrl, bucket, isDocument = false, env, fileName = null) {
             try {
                 const response = await fetch(imageUrl);
                 if (!response.ok) throw new Error('下载文件失败');
@@ -53,11 +53,42 @@ export default {
                 let fileExt = 'bin';
                 let mimeType = 'application/octet-stream';
                 
-                // 尝试检测图片类型，但不会限制上传
-                const detectedType = detectImageType(uint8Array);
-                if (detectedType) {
-                    fileExt = detectedType.ext;
-                    mimeType = detectedType.mime;
+                // 如果提供了原始文件名，从中提取扩展名
+                if (fileName) {
+                    const extractedExt = fileName.split('.').pop().toLowerCase();
+                    if (extractedExt && extractedExt.length > 0 && extractedExt.length < 10) {
+                        fileExt = extractedExt;
+                        // 尝试根据扩展名设置MIME类型
+                        const mimeTypes = {
+                            'jpg': 'image/jpeg',
+                            'jpeg': 'image/jpeg',
+                            'png': 'image/png',
+                            'gif': 'image/gif',
+                            'webp': 'image/webp',
+                            'svg': 'image/svg+xml',
+                            'pdf': 'application/pdf',
+                            'doc': 'application/msword',
+                            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            'xls': 'application/vnd.ms-excel',
+                            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            'ppt': 'application/vnd.ms-powerpoint',
+                            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                            'zip': 'application/zip',
+                            'rar': 'application/x-rar-compressed',
+                            '7z': 'application/x-7z-compressed',
+                            'mp3': 'audio/mpeg',
+                            'mp4': 'video/mp4',
+                            'avi': 'video/x-msvideo',
+                            'mov': 'video/quicktime',
+                            'txt': 'text/plain',
+                            'html': 'text/html',
+                            'css': 'text/css',
+                            'js': 'application/javascript',
+                            'json': 'application/json',
+                            'xml': 'application/xml',
+                        };
+                        mimeType = mimeTypes[fileExt] || 'application/octet-stream';
+                    }
                 }
 
                 // 生成文件路径
@@ -129,8 +160,8 @@ export default {
                 // 处理文档文件
                 if (update.message.document) {
                     const doc = update.message.document;
-                    // 移除文件类型限制，允许所有类型上传
-                    await handleMediaUpload(chatId, doc.file_id, true);
+                    // 传递文件名以便提取正确的扩展名
+                    await handleMediaUpload(chatId, doc.file_id, true, doc.file_name);
                     return new Response('OK');
                 }
 
