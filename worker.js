@@ -49,25 +49,30 @@ export default {
                 const buffer = await response.arrayBuffer();
                 const uint8Array = new Uint8Array(buffer);
 
-                // 验证文件类型
+                // 获取文件类型（不再限制类型）
+                let fileExt = 'bin';
+                let mimeType = 'application/octet-stream';
+                
+                // 尝试检测图片类型，但不会限制上传
                 const detectedType = detectImageType(uint8Array);
-                if (!detectedType) {
-                    return { ok: false, message: '只支持 JPG/PNG 格式文件' };
+                if (detectedType) {
+                    fileExt = detectedType.ext;
+                    mimeType = detectedType.mime;
                 }
 
                 // 生成文件路径
                 const date = new Date();
                 const formattedDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
                 const shortUUID = crypto.randomUUID().split('-')[0];
-                const key = `tg/${formattedDate}/${shortUUID}.${detectedType.ext}`;
+                const key = `tg/${formattedDate}/${shortUUID}.${fileExt}`;
 
                 // 上传到R2
                 await bucket.put(key, buffer, {
-                    httpMetadata: { contentType: detectedType.mime }
+                    httpMetadata: { contentType: mimeType }
                 });
 
                 // 同步上传到S3
-                let s3Result = await uploadImageToS3(buffer, key, detectedType.mime, env);
+                let s3Result = await uploadImageToS3(buffer, key, mimeType, env);
 
                 // 构建返回信息
                 const buildMessage = (prefix, baseUrl) =>
@@ -77,7 +82,7 @@ export default {
                 const r2ChinaMessage = buildMessage("大陆优化", BASE_URL);
 
                 let resultMessage = "✅ 图片上传成功！\n";
-                resultMessage += r2ChinaMessage + "\n" + r2GlobalMessage;
+                resultMessage += r2GlobalMessage + "\n" + r2ChinaMessage;
 
                 if (s3Result.ok) {
                     resultMessage += `\nS3 存储\n${s3Result.s3Url}\nMarkdown\n![img](${s3Result.s3Url})`;
@@ -124,13 +129,7 @@ export default {
                 // 处理文档文件
                 if (update.message.document) {
                     const doc = update.message.document;
-                    const fileExt = (doc.file_name || '').split('.').pop().toLowerCase();
-
-                    if (!['jpg', 'jpeg', 'png'].includes(fileExt)) {
-                        await sendMessage(chatId, '不支持的文件类型，请发送 JPG/PNG 格式文件', TELEGRAM_API_URL);
-                        return new Response('OK');
-                    }
-
+                    // 移除文件类型限制，允许所有类型上传
                     await handleMediaUpload(chatId, doc.file_id, true);
                     return new Response('OK');
                 }
@@ -199,6 +198,17 @@ async function getFileUrl(fileId, botToken) {
         `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
     );
     const data = await response.json();
+    
+    // Check if the result exists and has a file_path
+    if (!data.result || !data.result.file_path) {
+        // Check if the file is too large (Telegram has a 20MB limit for bot API)
+        if (data.description && data.description.includes('file is too big')) {
+            throw new Error('文件大小超过Telegram的20MB限制，无法处理');
+        } else {
+            throw new Error('无法获取文件路径: ' + JSON.stringify(data));
+        }
+    }
+    
     return `https://api.telegram.org/file/bot${botToken}/${data.result.file_path}`;
 }
 
