@@ -67,14 +67,14 @@ export default {
                 });
 
                 // 同步上传到S3
-                s3Result = await uploadImageToS3(buffer, key, detectedType.mime, env);
+                let s3Result = await uploadImageToS3(buffer, key, detectedType.mime, env);
 
                 // 构建返回信息
                 const buildMessage = (prefix, baseUrl) =>
                     `${prefix}直链\n${baseUrl}/${key}\nMarkdown\n![img](${baseUrl}/${key})`;
 
-                const r2ChinaMessage = buildMessage("大陆优化", BASE_URL);
                 const r2GlobalMessage = buildMessage("全球直连", BASE_CF_URL);
+                const r2ChinaMessage = buildMessage("大陆优化", BASE_URL);
 
                 let resultMessage = "✅ 图片上传成功！\n";
                 resultMessage += r2ChinaMessage + "\n" + r2GlobalMessage;
