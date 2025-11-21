@@ -89,6 +89,12 @@ export default {
                         };
                         mimeType = mimeTypes[fileExt] || 'application/octet-stream';
                     }
+                } else {
+                    const detectedType = detectImageType(uint8Array);
+                    if (detectedType) {
+                        fileExt = detectedType.ext;
+                        mimeType = detectedType.mime;
+                    }
                 }
 
                 // 生成文件路径
