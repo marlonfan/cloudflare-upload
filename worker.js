@@ -7,15 +7,728 @@ const BUCKET_NAME = "static"; // 填入绑定的R2存储库变量名
 const BASE_URL = "https://static.marlon.life" // 填入自己的R2访问域名
 const BASE_CF_URL = "https://static.zhire.de" // 填入反向代理域名
 
-// 配置 S3 客户端
-const s3Client = new S3Client({
-    region: 'ap-shanghai', // 例如 'us-east-1'
-    endpoint: 'https://cos.ap-shanghai.myqcloud.com',
-    credentials: {
-        accessKeyId: 'AWS_ACCESS_KEY_PLACEHOLDER',
-        secretAccessKey: 'AWS_SECRET_KEY_PLACEHOLDER'
+// ========== Cookie 工具函数 ==========
+function parseCookies(cookieHeader) {
+    const cookies = {};
+    if (!cookieHeader) return cookies;
+
+    cookieHeader.split(';').forEach(cookie => {
+        const [name, ...rest] = cookie.split('=');
+        const value = rest.join('=').trim();
+        if (name) {
+            cookies[name.trim()] = value;
+        }
+    });
+    return cookies;
+}
+
+function generateAuthToken(password) {
+    const timestamp = Date.now();
+    const data = `${password}|${timestamp}`;
+    return btoa(data);
+}
+
+function verifyAuthToken(token, correctPassword) {
+    try {
+        const decoded = atob(token);
+        const [password, timestamp] = decoded.split('|');
+
+        // 验证密码
+        if (password !== correctPassword) {
+            return false;
+        }
+
+        // 验证时间（24小时有效期）
+        const now = Date.now();
+        const tokenAge = now - parseInt(timestamp);
+        const maxAge = 24 * 60 * 60 * 1000; // 24小时
+
+        if (tokenAge > maxAge) {
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        return false;
     }
-});
+}
+
+// 配置 S3 客户端
+// const s3Client = new S3Client({
+//     region: 'ap-shanghai', // 例如 'us-east-1'
+//     endpoint: 'https://cos.ap-shanghai.myqcloud.com',
+//     credentials: {
+//         accessKeyId: 'AWS_ACCESS_KEY_PLACEHOLDER',
+//         secretAccessKey: 'AWS_SECRET_KEY_PLACEHOLDER'
+//     }
+// });
+
+// 登录页面
+function getLoginHTML(errorMessage = '') {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 图床上传</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            color: #666;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 图床登录</h1>
+        ${errorMessage ? `<div class="error">${errorMessage}</div>` : ''}
+        <form method="POST" action="/auth">
+            <div class="form-group">
+                <label for="password">请输入访问密码</label>
+                <input type="password" id="password" name="password" required autofocus>
+            </div>
+            <button type="submit" class="btn">登录</button>
+        </form>
+    </div>
+</body>
+</html>`;
+}
+
+// HTML 上传页面
+function getUploadHTML() {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图床上传</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+        .upload-area {
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f8f9ff;
+        }
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background: #f0f4ff;
+            transform: scale(1.02);
+        }
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        .upload-text {
+            color: #666;
+            font-size: 16px;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .file-info {
+            background: #f8f9ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .file-info.show {
+            display: block;
+        }
+        .file-name {
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+        .file-size {
+            color: #666;
+            font-size: 14px;
+        }
+        .file-preview {
+            display: none;
+            margin-top: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .file-preview.show {
+            display: block;
+        }
+        .preview-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #e0e0e0;
+        }
+        .preview-thumbnail {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 6px;
+            margin-right: 15px;
+            background: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+        .preview-thumbnail img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 6px;
+        }
+        .preview-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .preview-name {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 4px;
+            word-break: break-all;
+            font-size: 14px;
+        }
+        .preview-size {
+            color: #666;
+            font-size: 12px;
+        }
+        .paste-hint {
+            text-align: center;
+            color: #999;
+            font-size: 13px;
+            margin-top: 10px;
+            padding: 8px;
+            background: #f8f9ff;
+            border-radius: 6px;
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .progress {
+            width: 100%;
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            margin: 20px 0;
+            overflow: hidden;
+            display: none;
+        }
+        .progress.show {
+            display: block;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            text-align: center;
+            color: #666;
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+        .progress-text.show {
+            display: block;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .result.show {
+            display: block;
+        }
+        .result.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .result.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .url-item {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+        }
+        .url-label {
+            font-weight: 600;
+            margin-bottom: 5px;
+            display: block;
+        }
+        .url-content {
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            color: #333;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 5px;
+            cursor: pointer;
+            position: relative;
+        }
+        .url-content:hover {
+            background: #e9ecef;
+        }
+        .copy-hint {
+            position: absolute;
+            right: 5px;
+            top: 5px;
+            background: #667eea;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .url-content:hover .copy-hint {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖼️ 图床上传</h1>
+
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">点击选择文件或拖拽文件到这里</div>
+            <div class="upload-text" style="font-size: 14px; margin-top: 10px; color: #999;">支持所有文件类型</div>
+        </div>
+
+        <div class="paste-hint">💡 提示：可以使用 Ctrl+V (Mac: Cmd+V) 直接粘贴图片</div>
+
+        <input type="file" id="fileInput" multiple>
+
+        <div class="file-info" id="fileInfo">
+            <div class="file-name" id="fileName"></div>
+            <div class="file-size" id="fileSize"></div>
+            <div class="file-preview" id="filePreview"></div>
+        </div>
+
+        <button class="btn" id="uploadBtn" disabled>上传文件</button>
+
+        <div class="progress" id="progress">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="progress-text" id="progressText"></div>
+
+        <div class="result" id="result"></div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const filePreview = document.getElementById('filePreview');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const progress = document.getElementById('progress');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const result = document.getElementById('result');
+
+        let selectedFiles = [];
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files);
+            if (files.length > 0) {
+                handleFileSelect(files);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelect(Array.from(e.target.files));
+            }
+        });
+
+        // 监听粘贴事件
+        document.addEventListener('paste', (e) => {
+            const items = e.clipboardData.items;
+            const files = [];
+
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.kind === 'file') {
+                    const file = item.getAsFile();
+                    if (file) {
+                        files.push(file);
+                    }
+                }
+            }
+
+            if (files.length > 0) {
+                e.preventDefault();
+                handleFileSelect(files);
+            }
+        });
+
+        function handleFileSelect(files) {
+            selectedFiles = files;
+            const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+
+            fileName.textContent = files.length === 1
+                ? '文件名: ' + files[0].name
+                : '已选择 ' + files.length + ' 个文件';
+            fileSize.textContent = '总大小: ' + formatFileSize(totalSize);
+
+            // 生成预览
+            generatePreviews(files);
+
+            fileInfo.classList.add('show');
+            uploadBtn.disabled = false;
+            result.classList.remove('show');
+        }
+
+        function generatePreviews(files) {
+            filePreview.innerHTML = '';
+            if (files.length === 0) {
+                filePreview.classList.remove('show');
+                return;
+            }
+
+            filePreview.classList.add('show');
+
+            Array.from(files).forEach((file, index) => {
+                const previewItem = document.createElement('div');
+                previewItem.className = 'preview-item';
+
+                const thumbnail = document.createElement('div');
+                thumbnail.className = 'preview-thumbnail';
+
+                // 判断是否是图片
+                if (file.type.startsWith('image/')) {
+                    const img = document.createElement('img');
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                    thumbnail.appendChild(img);
+                } else {
+                    // 根据文件类型显示不同图标
+                    const icon = getFileIcon(file.type, file.name);
+                    thumbnail.textContent = icon;
+                }
+
+                const info = document.createElement('div');
+                info.className = 'preview-info';
+
+                const name = document.createElement('div');
+                name.className = 'preview-name';
+                name.textContent = file.name;
+
+                const size = document.createElement('div');
+                size.className = 'preview-size';
+                size.textContent = formatFileSize(file.size);
+
+                info.appendChild(name);
+                info.appendChild(size);
+
+                previewItem.appendChild(thumbnail);
+                previewItem.appendChild(info);
+
+                filePreview.appendChild(previewItem);
+            });
+        }
+
+        function getFileIcon(mimeType, fileName) {
+            // 视频
+            if (mimeType.startsWith('video/')) return '🎬';
+            // 音频
+            if (mimeType.startsWith('audio/')) return '🎵';
+            // PDF
+            if (mimeType === 'application/pdf') return '📄';
+            // 压缩文件
+            if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) return '📦';
+            // 文档
+            if (mimeType.includes('word') || mimeType.includes('document')) return '📝';
+            if (mimeType.includes('sheet') || mimeType.includes('excel')) return '📊';
+            if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return '📽️';
+            // 代码文件
+            const ext = fileName.split('.').pop().toLowerCase();
+            if (['js', 'ts', 'jsx', 'tsx', 'html', 'css', 'json', 'xml'].includes(ext)) return '💻';
+            if (['py', 'java', 'cpp', 'c', 'go', 'rs'].includes(ext)) return '💻';
+            // 其他
+            return '📎';
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        uploadBtn.addEventListener('click', async () => {
+            if (selectedFiles.length === 0) return;
+
+            uploadBtn.disabled = true;
+            progress.classList.add('show');
+            progressText.classList.add('show');
+            result.classList.remove('show');
+
+            const results = [];
+            const totalFiles = selectedFiles.length;
+
+            for (let i = 0; i < totalFiles; i++) {
+                const file = selectedFiles[i];
+                const currentProgress = ((i / totalFiles) * 100);
+                progressBar.style.width = currentProgress + '%';
+                progressText.textContent = '正在上传 (' + (i + 1) + '/' + totalFiles + '): ' + file.name;
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const data = await response.json();
+                    results.push({
+                        fileName: file.name,
+                        success: data.ok,
+                        data: data
+                    });
+                } catch (error) {
+                    results.push({
+                        fileName: file.name,
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            progressBar.style.width = '100%';
+            progressText.textContent = '上传完成！';
+
+            setTimeout(() => {
+                progress.classList.remove('show');
+                progressText.classList.remove('show');
+                progressBar.style.width = '0%';
+
+                const successCount = results.filter(r => r.success).length;
+                const failCount = results.length - successCount;
+
+                if (successCount > 0) {
+                    result.className = 'result show success';
+                    result.innerHTML = '<strong>✅ 上传完成！成功 ' + successCount + ' 个，失败 ' + failCount + ' 个</strong>' +
+                        results.map(r => {
+                            if (r.success) {
+                                return generateSuccessHTML(r.fileName, r.data);
+                            } else {
+                                return '<div class="url-item" style="background: #f8d7da;">' +
+                                    '<strong style="color: #721c24;">❌ ' + r.fileName + '</strong><br>' +
+                                    '<span style="color: #721c24;">' + (r.error || r.data.message) + '</span>' +
+                                '</div>';
+                            }
+                        }).join('');
+                } else {
+                    result.className = 'result show error';
+                    result.innerHTML = '<strong>上传失败</strong><br>所有文件上传失败';
+                }
+
+                uploadBtn.disabled = false;
+            }, 500);
+        });
+
+        function generateSuccessHTML(fileName, data) {
+            let html = '<div class="url-item"><strong>' + fileName + '</strong>';
+
+            if (data.globalUrl) {
+                html += '<span class="url-label">🌍 全球直连</span>' +
+                    '<div class="url-content" onclick="copyToClipboard(this)">' +
+                        data.globalUrl +
+                        '<span class="copy-hint">点击复制</span>' +
+                    '</div>' +
+                    '<div class="url-content" onclick="copyToClipboard(this)" style="margin-top: 5px;">' +
+                        '![img](' + data.globalUrl + ')' +
+                        '<span class="copy-hint">点击复制</span>' +
+                    '</div>';
+            }
+
+            if (data.chinaUrl) {
+                html += '<span class="url-label">🇨🇳 大陆优化</span>' +
+                    '<div class="url-content" onclick="copyToClipboard(this)">' +
+                        data.chinaUrl +
+                        '<span class="copy-hint">点击复制</span>' +
+                    '</div>' +
+                    '<div class="url-content" onclick="copyToClipboard(this)" style="margin-top: 5px;">' +
+                        '![img](' + data.chinaUrl + ')' +
+                        '<span class="copy-hint">点击复制</span>' +
+                    '</div>';
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function copyToClipboard(element) {
+            const text = element.textContent.replace('点击复制', '').trim();
+            navigator.clipboard.writeText(text).then(() => {
+                const hint = element.querySelector('.copy-hint');
+                const originalText = hint.textContent;
+                hint.textContent = '已复制!';
+                hint.style.opacity = '1';
+                setTimeout(() => {
+                    hint.textContent = originalText;
+                    hint.style.opacity = '';
+                }, 1500);
+            });
+        }
+    </script>
+</body>
+</html>`;
+}
 
 export default {
     async fetch(request, env) {
@@ -108,8 +821,8 @@ export default {
                     httpMetadata: { contentType: mimeType }
                 });
 
-                // 同步上传到S3
-                let s3Result = await uploadImageToS3(buffer, key, mimeType, env);
+                // 同步上传到S3，因为腾讯账号卖了所以没有可用的COS空间，这里注释掉了
+                // let s3Result = await uploadImageToS3(buffer, key, mimeType, env);
 
                 // 构建返回信息
                 const buildMessage = (prefix, baseUrl) =>
@@ -121,16 +834,189 @@ export default {
                 let resultMessage = "✅ 图片上传成功！\n";
                 resultMessage += r2GlobalMessage + "\n" + r2ChinaMessage;
 
-                if (s3Result.ok) {
-                    resultMessage += `\nS3 存储\n${s3Result.s3Url}\nMarkdown\n![img](${s3Result.s3Url})`;
-                } else if (s3Result.message !== "未配置S3") {
-                    resultMessage += `\n⚠️ S3 上传失败: ${s3Result.message}`;
-                }
+                // 和上面S3上传一样，这里也注释掉了
+                // if (s3Result.ok) {
+                //     resultMessage += `\nS3 存储\n${s3Result.s3Url}\nMarkdown\n![img](${s3Result.s3Url})`;
+                // } else if (s3Result.message !== "未配置S3") {
+                //     resultMessage += `\n⚠️ S3 上传失败: ${s3Result.message}`;
+                // }
 
                 return { ok: true, message: resultMessage };
             } catch (error) {
                 console.error('上传失败:', error);
                 return { ok: false, message: '文件上传失败，请稍后再试。' };
+            }
+        }
+
+        // 网页上传路由
+        if (url.pathname === '/' && request.method === 'GET') {
+            // 验证 Cookie
+            const cookies = parseCookies(request.headers.get('Cookie') || '');
+            const token = cookies['auth_token'];
+
+            if (!token || !verifyAuthToken(token, env.WEB_UPLOAD_PASSWORD || 'your_secure_password_here')) {
+                return new Response(getLoginHTML(), {
+                    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+                });
+            }
+
+            return new Response(getUploadHTML(), {
+                headers: { 'Content-Type': 'text/html; charset=utf-8' }
+            });
+        }
+
+        // 登录验证路由
+        if (url.pathname === '/auth' && request.method === 'POST') {
+            const formData = await request.formData();
+            const password = formData.get('password');
+            const configPassword = env.WEB_UPLOAD_PASSWORD || 'your_secure_password_here';
+
+            if (password === configPassword) {
+                const token = generateAuthToken(password);
+                return new Response(null, {
+                    status: 302,
+                    headers: {
+                        'Location': '/',
+                        'Set-Cookie': `auth_token=${token}; HttpOnly; Secure; Max-Age=86400; Path=/; SameSite=Lax`
+                    }
+                });
+            }
+
+            return new Response(getLoginHTML('密码错误，请重试'), {
+                status: 401,
+                headers: { 'Content-Type': 'text/html; charset=utf-8' }
+            });
+        }
+
+        // 处理网页文件上传
+        if (url.pathname === '/upload' && request.method === 'POST') {
+            try {
+                // 验证 Cookie
+                const cookies = parseCookies(request.headers.get('Cookie') || '');
+                const token = cookies['auth_token'];
+
+                if (!token || !verifyAuthToken(token, env.WEB_UPLOAD_PASSWORD || 'your_secure_password_here')) {
+                    return new Response(JSON.stringify({
+                        ok: false,
+                        message: '未授权访问，请先登录'
+                    }), {
+                        status: 401,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+
+                const formData = await request.formData();
+                const file = formData.get('file');
+
+                if (!file) {
+                    return new Response(JSON.stringify({
+                        ok: false,
+                        message: '没有上传文件'
+                    }), {
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+
+                // 上传文件到 R2
+                const buffer = await file.arrayBuffer();
+                const uint8Array = new Uint8Array(buffer);
+
+                // 获取文件类型
+                let fileExt = 'bin';
+                let mimeType = 'application/octet-stream';
+
+                // 从文件名提取扩展名
+                if (file.name) {
+                    const extractedExt = file.name.split('.').pop().toLowerCase();
+                    if (extractedExt && extractedExt.length > 0 && extractedExt.length < 10) {
+                        fileExt = extractedExt;
+                        // 尝试根据扩展名设置MIME类型
+                        const mimeTypes = {
+                            'jpg': 'image/jpeg',
+                            'jpeg': 'image/jpeg',
+                            'png': 'image/png',
+                            'gif': 'image/gif',
+                            'webp': 'image/webp',
+                            'svg': 'image/svg+xml',
+                            'pdf': 'application/pdf',
+                            'doc': 'application/msword',
+                            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            'xls': 'application/vnd.ms-excel',
+                            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            'ppt': 'application/vnd.ms-powerpoint',
+                            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                            'zip': 'application/zip',
+                            'rar': 'application/x-rar-compressed',
+                            '7z': 'application/x-7z-compressed',
+                            'mp3': 'audio/mpeg',
+                            'mp4': 'video/mp4',
+                            'avi': 'video/x-msvideo',
+                            'mov': 'video/quicktime',
+                            'txt': 'text/plain',
+                            'html': 'text/html',
+                            'css': 'text/css',
+                            'js': 'application/javascript',
+                            'json': 'application/json',
+                            'xml': 'application/xml',
+                        };
+                        mimeType = mimeTypes[fileExt] || file.type || 'application/octet-stream';
+                    }
+                } else {
+                    // 如果没有文件名，尝试检测图片类型
+                    const detectedType = detectImageType(uint8Array);
+                    if (detectedType) {
+                        fileExt = detectedType.ext;
+                        mimeType = detectedType.mime;
+                    }
+                }
+
+                // 生成文件路径
+                const date = new Date();
+                const formattedDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+                const shortUUID = crypto.randomUUID().split('-')[0];
+                const key = `web/${formattedDate}/${shortUUID}.${fileExt}`;
+
+                // 上传到R2
+                await env[BUCKET_NAME].put(key, buffer, {
+                    httpMetadata: { contentType: mimeType }
+                });
+
+                const globalUrl = `${BASE_CF_URL}/${key}`;
+                const chinaUrl = `${BASE_URL}/${key}`;
+
+                // 发送 Telegram 通知
+                try {
+                    const notificationMessage =
+                        `🌐 网页上传成功\n` +
+                        `文件名: ${file.name}\n` +
+                        `大小: ${(file.size / 1024).toFixed(2)} KB\n` +
+                        `全球直连: ${globalUrl}\n` +
+                        `大陆优化: ${chinaUrl}`;
+
+                    await sendMessage(CHAT_ID[0], notificationMessage, TELEGRAM_API_URL);
+                } catch (tgError) {
+                    console.error('Telegram通知发送失败:', tgError);
+                    // 通知失败不影响上传结果
+                }
+
+                // 返回成功响应
+                return new Response(JSON.stringify({
+                    ok: true,
+                    message: '上传成功',
+                    globalUrl: globalUrl,
+                    chinaUrl: chinaUrl
+                }), {
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } catch (error) {
+                console.error('网页上传失败:', error);
+                return new Response(JSON.stringify({
+                    ok: false,
+                    message: '上传失败: ' + error.message
+                }), {
+                    status: 500,
+                    headers: { 'Content-Type': 'application/json' }
+                });
             }
         }
 
