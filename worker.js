@@ -1045,6 +1045,32 @@ export default {
 
                 // 处理文本消息
                 if (update.message.text) {
+                    const text = update.message.text.trim();
+                    const isDeleteCommand = text === '删除' || text.toLowerCase() === 'delete' || text.toLowerCase() === 'del';
+
+                    if (isDeleteCommand && update.message.reply_to_message?.text) {
+                        const keys = extractR2KeysFromText(update.message.reply_to_message.text);
+                        if (keys.length === 0) {
+                            await sendMessage(chatId, '未在被回复的消息中找到可删除的链接，请确认回复的是上传成功消息。', TELEGRAM_API_URL);
+                            return new Response('OK');
+                        }
+
+                        const uniqueKeys = [...new Set(keys)];
+                        const deleteResults = [];
+                        for (const key of uniqueKeys) {
+                            try {
+                                await env[BUCKET_NAME].delete(key);
+                                deleteResults.push(`✅ 已删除: ${key}`);
+                            } catch (err) {
+                                console.error('删除失败:', key, err);
+                                deleteResults.push(`❌ 删除失败: ${key}`);
+                            }
+                        }
+
+                        await sendMessage(chatId, deleteResults.join('\n'), TELEGRAM_API_URL);
+                        return new Response('OK');
+                    }
+
                     await sendMessage(chatId, '请发给我一张图片', TELEGRAM_API_URL);
                     return new Response('OK');
                 }
@@ -1153,4 +1179,38 @@ async function setWebhook(webhookUrl, apiUrl) {
         body: JSON.stringify({ url: webhookUrl }),
     });
     return response.json();
+}
+
+function extractR2KeysFromText(text) {
+    if (!text) return [];
+    const urls = text.match(/https?:\/\/[^\s)]+/g) || [];
+    const keys = [];
+    let baseCfOrigin = '';
+    let baseOrigin = '';
+
+    try {
+        baseCfOrigin = new URL(BASE_CF_URL).origin;
+    } catch (_) {
+        baseCfOrigin = '';
+    }
+
+    try {
+        baseOrigin = new URL(BASE_URL).origin;
+    } catch (_) {
+        baseOrigin = '';
+    }
+
+    for (const rawUrl of urls) {
+        try {
+            const url = new URL(rawUrl);
+            if (url.origin === baseCfOrigin || url.origin === baseOrigin) {
+                const key = url.pathname.replace(/^\/+/, '');
+                if (key) keys.push(key);
+            }
+        } catch (_) {
+            // ignore malformed URLs
+        }
+    }
+
+    return keys;
 }
