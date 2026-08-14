@@ -30,6 +30,8 @@ python3 ./.claude/skills/cf-file-upload/scripts/init_config.py
 npx skills use marlonfan/cloudflare-upload@cf-file-upload
 ```
 
+完整的面向 AI Agent 的分步安装指南见 [INSTALL.md](INSTALL.md)。
+
 ## 🛠️ Skill 能力
 
 ```bash
