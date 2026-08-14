@@ -2,9 +2,6 @@
     "name": "image",
     "compatibility_date": "2026-01-15",
     "main": "./worker.js",
-    "vars": {
-        "WEB_UPLOAD_PASSWORD": "WEB_UPLOAD_PASSWORD_PLACEHOLDER"
-    },
     "r2_buckets": [
         {
             "binding": "static",

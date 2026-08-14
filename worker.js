@@ -1,12 +1,3 @@
-// 导入 AWS SDK
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-
-const TELEGRAM_BOT_TOKEN = "TELEGRAM_BOT_TOKEN_PLACEHOLDER"; // 填入TG机器人token
-const CHAT_ID = ["CHAT_ID_PLACEHOLDER"]; // 填入可以访问机器人的用户ID
-const BUCKET_NAME = "static"; // 填入绑定的R2存储库变量名
-const BASE_URL = "https://static.marlon.life" // 填入自己的R2访问域名
-const BASE_CF_URL = "https://static.zhire.de" // 填入反向代理域名
-
 // ========== Cookie 工具函数 ==========
 function parseCookies(cookieHeader) {
     const cookies = {};
@@ -52,16 +43,6 @@ function verifyAuthToken(token, correctPassword) {
         return false;
     }
 }
-
-// 配置 S3 客户端
-// const s3Client = new S3Client({
-//     region: 'ap-shanghai', // 例如 'us-east-1'
-//     endpoint: 'https://cos.ap-shanghai.myqcloud.com',
-//     credentials: {
-//         accessKeyId: 'AWS_ACCESS_KEY_PLACEHOLDER',
-//         secretAccessKey: 'AWS_SECRET_KEY_PLACEHOLDER'
-//     }
-// });
 
 // 登录页面
 function getLoginHTML(errorMessage = '') {
@@ -732,6 +713,19 @@ function getUploadHTML() {
 
 export default {
     async fetch(request, env) {
+        // ========== 运行时配置 ==========
+        // 机密信息全部从环境变量加载：本地开发读取 .env（wrangler 自动加载），
+        // 生产环境用 `wrangler secret put <KEY>` 设置，绝不硬编码在代码里。
+        const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || ''; // TG机器人token（机密）
+        const CHAT_ID = (env.TELEGRAM_CHAT_IDS || '') // 允许访问机器人的用户ID，逗号分隔（隐私）
+            .split(',')
+            .map(id => id.trim())
+            .filter(Boolean);
+        const BUCKET_NAME = env.R2_BUCKET_NAME || 'static'; // R2 存储绑定名
+        const BASE_CF_URL = env.BASE_CF_URL || 'https://static.zhire.de'; // 反向代理域名（公开）
+        const BASE_URL = env.BASE_URL || 'https://static.marlon.life'; // R2 访问域名（公开）
+        const WEB_UPLOAD_PASSWORD = env.WEB_UPLOAD_PASSWORD || ''; // 网页上传密码（机密）
+
         const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
         const url = new URL(request.url);
 
@@ -854,7 +848,7 @@ export default {
             const cookies = parseCookies(request.headers.get('Cookie') || '');
             const token = cookies['auth_token'];
 
-            if (!token || !verifyAuthToken(token, env.WEB_UPLOAD_PASSWORD || 'your_secure_password_here')) {
+            if (!token || !verifyAuthToken(token, WEB_UPLOAD_PASSWORD)) {
                 return new Response(getLoginHTML(), {
                     headers: { 'Content-Type': 'text/html; charset=utf-8' }
                 });
@@ -869,9 +863,15 @@ export default {
         if (url.pathname === '/auth' && request.method === 'POST') {
             const formData = await request.formData();
             const password = formData.get('password');
-            const configPassword = env.WEB_UPLOAD_PASSWORD || 'your_secure_password_here';
 
-            if (password === configPassword) {
+            if (!WEB_UPLOAD_PASSWORD) {
+                return new Response(getLoginHTML('服务未配置访问密码'), {
+                    status: 500,
+                    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+                });
+            }
+
+            if (password === WEB_UPLOAD_PASSWORD) {
                 const token = generateAuthToken(password);
                 return new Response(null, {
                     status: 302,
@@ -895,7 +895,7 @@ export default {
                 const cookies = parseCookies(request.headers.get('Cookie') || '');
                 const token = cookies['auth_token'];
 
-                if (!token || !verifyAuthToken(token, env.WEB_UPLOAD_PASSWORD || 'your_secure_password_here')) {
+                if (!token || !verifyAuthToken(token, WEB_UPLOAD_PASSWORD)) {
                     return new Response(JSON.stringify({
                         ok: false,
                         message: '未授权访问，请先登录'
@@ -1049,7 +1049,7 @@ export default {
                     const isDeleteCommand = text === '删除' || text.toLowerCase() === 'delete' || text.toLowerCase() === 'del';
 
                     if (isDeleteCommand && update.message.reply_to_message?.text) {
-                        const keys = extractR2KeysFromText(update.message.reply_to_message.text);
+                        const keys = extractR2KeysFromText(update.message.reply_to_message.text, BASE_CF_URL, BASE_URL);
                         if (keys.length === 0) {
                             await sendMessage(chatId, '未在被回复的消息中找到可删除的链接，请确认回复的是上传成功消息。', TELEGRAM_API_URL);
                             return new Response('OK');
@@ -1100,25 +1100,6 @@ export default {
         return new Response('Not found', { status: 404 });
     },
 };
-
-async function uploadImageToS3(buffer, key, mimeType, env) {
-    try {
-        // 准备上传到 S3 的参数
-        const uploadParams = {
-            Bucket: 'scf-deploy-ap-shanghai-1255094666',
-            Key: key, // 文件在 S3 中的路径
-            Body: buffer,
-            ContentType: mimeType
-        };
-
-        // 上传到 S3
-        const command = new PutObjectCommand(uploadParams);
-        await s3Client.send(command);
-        return { ok: false, message: "未配置S3", s3Url: "" };
-    } catch (error) {
-        return { ok: false, message: error, s3Url: "" };
-    }
-}
 
 // ========== 工具函数 ==========
 function detectImageType(uint8Array) {
@@ -1181,7 +1162,7 @@ async function setWebhook(webhookUrl, apiUrl) {
     return response.json();
 }
 
-function extractR2KeysFromText(text) {
+function extractR2KeysFromText(text, baseCfUrl, baseUrl) {
     if (!text) return [];
     const urls = text.match(/https?:\/\/[^\s)]+/g) || [];
     const keys = [];
@@ -1189,13 +1170,13 @@ function extractR2KeysFromText(text) {
     let baseOrigin = '';
 
     try {
-        baseCfOrigin = new URL(BASE_CF_URL).origin;
+        baseCfOrigin = new URL(baseCfUrl).origin;
     } catch (_) {
         baseCfOrigin = '';
     }
 
     try {
-        baseOrigin = new URL(BASE_URL).origin;
+        baseOrigin = new URL(baseUrl).origin;
     } catch (_) {
         baseOrigin = '';
     }
