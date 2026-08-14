@@ -415,6 +415,29 @@ function getUploadHTML() {
         .url-content:hover .copy-hint {
             opacity: 1;
         }
+        .delete-btn {
+            margin-top: 8px;
+            padding: 6px 14px;
+            border: 1px solid #f5c6cb;
+            background: #fff5f5;
+            color: #c0392b;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .delete-btn:hover {
+            background: #f8d7da;
+        }
+        .delete-btn:disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+        .delete-btn.deleted {
+            border-color: #d4edda;
+            background: #f0fff4;
+            color: #27ae60;
+        }
     </style>
 </head>
 <body>
@@ -718,6 +741,12 @@ function getUploadHTML() {
                     '</div>';
             }
 
+            // 删除按钮（从 URL 提取 key）
+            const key = (data.globalUrl || '').replace(/^https?:\/\/[^/]+\//, '');
+            if (key) {
+                html += '<button class="delete-btn" onclick="deleteFile(this, \'' + key + '\')">🗑️ 删除</button>';
+            }
+
             html += '</div>';
             return html;
         }
@@ -734,6 +763,35 @@ function getUploadHTML() {
                     hint.style.opacity = '';
                 }, 1500);
             });
+        }
+
+        async function deleteFile(btn, key) {
+            if (!confirm('确定删除该文件吗？\n' + key)) return;
+            btn.disabled = true;
+            btn.textContent = '⏳ 删除中...';
+            const formData = new FormData();
+            formData.append('path', key);
+            try {
+                const response = await fetch('/delete', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    btn.textContent = '✅ 已删除';
+                    btn.classList.add('deleted');
+                    const item = btn.closest('.url-item');
+                    if (item) item.style.opacity = '0.5';
+                } else {
+                    alert('删除失败: ' + (data.message || '未知错误'));
+                    btn.disabled = false;
+                    btn.textContent = '🗑️ 删除';
+                }
+            } catch (error) {
+                alert('删除失败: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = '🗑️ 删除';
+            }
         }
     </script>
 </body>
@@ -1016,6 +1074,95 @@ export default {
                 return new Response(JSON.stringify({
                     ok: false,
                     message: '上传失败: ' + error.message
+                }), {
+                    status: 500,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+        }
+
+        // 处理文件删除（支持 key 或完整 URL，需登录）
+        if (url.pathname === '/delete' && request.method === 'POST') {
+            try {
+                // 验证 Cookie
+                const cookies = parseCookies(request.headers.get('Cookie') || '');
+                const token = cookies['auth_token'];
+
+                if (!token || !verifyAuthToken(token, WEB_UPLOAD_PASSWORD)) {
+                    return new Response(JSON.stringify({
+                        ok: false,
+                        message: '未授权访问，请先登录'
+                    }), {
+                        status: 401,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+
+                const formData = await request.formData();
+                let target = (formData.get('path') || formData.get('key') || formData.get('url') || '').trim();
+                if (!target) {
+                    return new Response(JSON.stringify({
+                        ok: false,
+                        message: '没有指定要删除的文件'
+                    }), {
+                        status: 400,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+
+                // 支持传完整 URL（自动提取路径）或直接传 key
+                if (/^https?:\/\//i.test(target)) {
+                    try {
+                        target = decodeURIComponent(new URL(target).pathname).replace(/^\/+/, '');
+                    } catch (_) {
+                        return new Response(JSON.stringify({
+                            ok: false,
+                            message: 'URL 不合法'
+                        }), {
+                            status: 400,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+                }
+
+                // 复用路径校验（防目录穿越等）
+                const validated = validateCustomPath(target, '');
+                if (!validated.ok) {
+                    return new Response(JSON.stringify({
+                        ok: false,
+                        message: '路径不合法: ' + validated.error
+                    }), {
+                        status: 400,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                const key = validated.path;
+
+                // 检查是否存在
+                const existing = await env[BUCKET_NAME].head(key);
+                if (!existing) {
+                    return new Response(JSON.stringify({
+                        ok: false,
+                        message: '文件不存在'
+                    }), {
+                        status: 404,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+
+                await env[BUCKET_NAME].delete(key);
+                return new Response(JSON.stringify({
+                    ok: true,
+                    message: '已删除',
+                    key: key
+                }), {
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } catch (error) {
+                console.error('文件删除失败:', error);
+                return new Response(JSON.stringify({
+                    ok: false,
+                    message: '删除失败: ' + error.message
                 }), {
                     status: 500,
                     headers: { 'Content-Type': 'application/json' }

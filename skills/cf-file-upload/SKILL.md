@@ -69,6 +69,20 @@ python3 scripts/upload_file.py --path blog/cover.jpg /path/to/cover.jpg
 - Without `--path`, a random `web/YYYYMMDD/<uuid>.<ext>` path is generated as before.
 - The environment variable `CF_FILE_UPLOAD_PATH` can be used instead of `--path`.
 
+### Delete files (删除文件)
+
+Pass `--delete` to remove objects from the worker instead of uploading. The positional arguments are treated as keys or full URLs:
+
+```bash
+python3 scripts/upload_file.py --delete avatar.png
+python3 scripts/upload_file.py --delete https://static.zhire.de/blog/cover.jpg
+python3 scripts/upload_file.py --delete blog/old-a.png blog/old-b.png
+```
+
+- Accepts either a bare key (`avatar.png`) or a full service URL (the path is extracted automatically).
+- Deleting keeps the URL returning 404 afterwards; use when the user asks to remove a file, take down a link, or clean up.
+- The web upload page also shows a delete button next to each uploaded file.
+
 For machine-readable output:
 
 ```bash

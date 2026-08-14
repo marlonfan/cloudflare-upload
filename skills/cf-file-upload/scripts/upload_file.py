@@ -138,6 +138,20 @@ def upload_one(
     return data
 
 
+def delete_one(opener: request.OpenerDirector, base_url: str, target: str) -> dict:
+    """Delete an object by key or full URL."""
+    body = parse.urlencode({"path": target}).encode("utf-8")
+    req = request.Request(
+        url_join(base_url, "/delete"),
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    return open_json(opener, req)
+
+
 def markdown_for(file_path: Path, url: str) -> str:
     mime = mimetypes.guess_type(file_path.name)[0] or ""
     label = file_path.name.replace("[", "\\[").replace("]", "\\]")
@@ -158,6 +172,10 @@ def plain_output(results: list[dict]) -> str:
         if data.get("chinaUrl"):
             lines.append(f"china: {data['chinaUrl']}")
             lines.append(f"markdown_china: {markdown_for(file_path, data['chinaUrl'])}")
+        if data.get("key"):
+            lines.append(f"deleted: {data['key']}")
+        if data.get("message") and not data.get("globalUrl"):
+            lines.append(f"message: {data['message']}")
         chunks.append("\n".join(lines))
     return "\n\n".join(chunks)
 
@@ -169,6 +187,7 @@ def main() -> int:
     parser.add_argument("--base-url", help="Override Worker base URL")
     parser.add_argument("--password", help="Override upload password")
     parser.add_argument("--path", help="Save path on the worker (overwrite existing file, e.g. avatar.png or blog/cover.jpg). Auto-appends original extension if omitted")
+    parser.add_argument("--delete", action="store_true", help="Delete files by key or URL instead of uploading (files argument is treated as keys/URLs)")
     parser.add_argument("--user-agent", help="Override the browser-like User-Agent header")
     parser.add_argument("--format", choices=["plain", "json"], default="plain")
     args = parser.parse_args()
@@ -194,10 +213,16 @@ def main() -> int:
     login(opener, base_url, password, user_agent)
 
     results = []
-    for file_path in args.files:
-        resolved = file_path.expanduser()
-        data = upload_one(opener, base_url, resolved, user_agent, path=path)
-        results.append({"file": str(resolved), "response": data})
+    if args.delete:
+        # 删除模式：files 参数按 key 或完整 URL 处理
+        for target in args.files:
+            data = delete_one(opener, base_url, str(target))
+            results.append({"file": str(target), "response": data})
+    else:
+        for file_path in args.files:
+            resolved = file_path.expanduser()
+            data = upload_one(opener, base_url, resolved, user_agent, path=path)
+            results.append({"file": str(resolved), "response": data})
 
     if args.format == "json":
         print(json.dumps(results, ensure_ascii=False, indent=2))
