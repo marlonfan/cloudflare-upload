@@ -54,6 +54,21 @@ Upload multiple files by passing multiple paths:
 python3 scripts/upload_file.py /path/a.png /path/report.pdf
 ```
 
+### Overwrite a specific path (指定路径覆盖更新)
+
+Pass `--path` to save the file at a fixed path and overwrite any existing object there (the public URL stays the same). Use this when the user asks to update/replace an existing image or file in place:
+
+```bash
+python3 scripts/upload_file.py --path avatar.png /path/to/new.png
+python3 scripts/upload_file.py --path blog/cover.jpg /path/to/cover.jpg
+```
+
+- The path may contain subdirectories (`blog/cover.jpg`).
+- If the path has no extension, the original file's extension is appended automatically (e.g. `--path avatar` with a PNG becomes `avatar.png`).
+- Paths must be relative and use only letters, digits, `.`, `_`, `-`, `/`; traversal (`..`) and absolute paths are rejected by the worker.
+- Without `--path`, a random `web/YYYYMMDD/<uuid>.<ext>` path is generated as before.
+- The environment variable `CF_FILE_UPLOAD_PATH` can be used instead of `--path`.
+
 For machine-readable output:
 
 ```bash

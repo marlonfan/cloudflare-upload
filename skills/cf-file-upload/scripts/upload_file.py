@@ -44,13 +44,23 @@ def url_join(base_url: str, path: str) -> str:
     return base_url.rstrip("/") + "/" + path.lstrip("/")
 
 
-def build_multipart(file_path: Path, field_name: str = "file") -> tuple[bytes, str]:
+def build_multipart(
+    file_path: Path,
+    field_name: str = "file",
+    extra_fields: dict | None = None,
+) -> tuple[bytes, str]:
     boundary = "----cf-file-upload-" + secrets.token_hex(16)
     filename = file_path.name
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     file_bytes = file_path.read_bytes()
 
-    parts = [
+    parts = []
+    for name, value in (extra_fields or {}).items():
+        parts.append(f"--{boundary}\r\n".encode("utf-8"))
+        parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        parts.append(str(value).encode("utf-8"))
+        parts.append(b"\r\n")
+    parts += [
         f"--{boundary}\r\n".encode("utf-8"),
         (
             f'Content-Disposition: form-data; name="{field_name}"; '
@@ -105,11 +115,13 @@ def upload_one(
     base_url: str,
     file_path: Path,
     user_agent: str,
+    path: str | None = None,
 ) -> dict:
     if not file_path.exists() or not file_path.is_file():
         raise RuntimeError(f"File not found: {file_path}")
 
-    body, content_type = build_multipart(file_path)
+    extra_fields = {"path": path} if path else None
+    body, content_type = build_multipart(file_path, extra_fields=extra_fields)
     req = request.Request(
         url_join(base_url, "/upload"),
         data=body,
@@ -156,6 +168,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=default_config_path(), help="Config file path")
     parser.add_argument("--base-url", help="Override Worker base URL")
     parser.add_argument("--password", help="Override upload password")
+    parser.add_argument("--path", help="Save path on the worker (overwrite existing file, e.g. avatar.png or blog/cover.jpg). Auto-appends original extension if omitted")
     parser.add_argument("--user-agent", help="Override the browser-like User-Agent header")
     parser.add_argument("--format", choices=["plain", "json"], default="plain")
     args = parser.parse_args()
@@ -163,6 +176,7 @@ def main() -> int:
     config = load_config(args.config.expanduser())
     base_url = (args.base_url or config.get("base_url") or "").rstrip("/")
     password = args.password or os.environ.get("CF_FILE_UPLOAD_PASSWORD") or config.get("password")
+    path = args.path or os.environ.get("CF_FILE_UPLOAD_PATH") or None
     user_agent = (
         args.user_agent
         or os.environ.get("CF_FILE_UPLOAD_USER_AGENT")
@@ -182,7 +196,7 @@ def main() -> int:
     results = []
     for file_path in args.files:
         resolved = file_path.expanduser()
-        data = upload_one(opener, base_url, resolved, user_agent)
+        data = upload_one(opener, base_url, resolved, user_agent, path=path)
         results.append({"file": str(resolved), "response": data})
 
     if args.format == "json":

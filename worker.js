@@ -289,6 +289,25 @@ function getUploadHTML() {
             background: #f8f9ff;
             border-radius: 6px;
         }
+        .path-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 15px;
+            outline: none;
+            transition: border-color 0.3s;
+            box-sizing: border-box;
+        }
+        .path-input:focus {
+            border-color: #667eea;
+        }
+        .path-hint {
+            font-size: 12px;
+            color: #999;
+            margin: -8px 0 15px;
+        }
         .btn {
             width: 100%;
             padding: 15px;
@@ -409,6 +428,9 @@ function getUploadHTML() {
         </div>
 
         <div class="paste-hint">💡 提示：可以使用 Ctrl+V (Mac: Cmd+V) 直接粘贴图片</div>
+
+        <input type="text" class="path-input" id="savePath" placeholder="保存路径（可选）如: avatar.png 或 blog/cover.jpg">
+        <div class="path-hint">填写路径后将覆盖该路径下的旧文件（URL 不变）；留空则自动生成随机路径</div>
 
         <input type="file" id="fileInput" multiple>
 
@@ -591,6 +613,12 @@ function getUploadHTML() {
         uploadBtn.addEventListener('click', async () => {
             if (selectedFiles.length === 0) return;
 
+            const savePath = document.getElementById('savePath').value.trim();
+            if (savePath && selectedFiles.length > 1) {
+                alert('指定保存路径时仅支持上传单个文件');
+                return;
+            }
+
             uploadBtn.disabled = true;
             progress.classList.add('show');
             progressText.classList.add('show');
@@ -607,6 +635,7 @@ function getUploadHTML() {
 
                 const formData = new FormData();
                 formData.append('file', file);
+                if (savePath) formData.append('path', savePath);
 
                 try {
                     const response = await fetch('/upload', {
@@ -765,36 +794,7 @@ export default {
                     const extractedExt = fileName.split('.').pop().toLowerCase();
                     if (extractedExt && extractedExt.length > 0 && extractedExt.length < 10) {
                         fileExt = extractedExt;
-                        // 尝试根据扩展名设置MIME类型
-                        const mimeTypes = {
-                            'jpg': 'image/jpeg',
-                            'jpeg': 'image/jpeg',
-                            'png': 'image/png',
-                            'gif': 'image/gif',
-                            'webp': 'image/webp',
-                            'svg': 'image/svg+xml',
-                            'pdf': 'application/pdf',
-                            'doc': 'application/msword',
-                            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            'xls': 'application/vnd.ms-excel',
-                            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            'ppt': 'application/vnd.ms-powerpoint',
-                            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                            'zip': 'application/zip',
-                            'rar': 'application/x-rar-compressed',
-                            '7z': 'application/x-7z-compressed',
-                            'mp3': 'audio/mpeg',
-                            'mp4': 'video/mp4',
-                            'avi': 'video/x-msvideo',
-                            'mov': 'video/quicktime',
-                            'txt': 'text/plain',
-                            'html': 'text/html',
-                            'css': 'text/css',
-                            'js': 'application/javascript',
-                            'json': 'application/json',
-                            'xml': 'application/xml',
-                        };
-                        mimeType = mimeTypes[fileExt] || 'application/octet-stream';
+                        mimeType = MIME_TYPES[fileExt] || 'application/octet-stream';
                     }
                 } else {
                     const detectedType = detectImageType(uint8Array);
@@ -907,6 +907,7 @@ export default {
 
                 const formData = await request.formData();
                 const file = formData.get('file');
+                const rawPath = formData.get('path');
 
                 if (!file) {
                     return new Response(JSON.stringify({
@@ -915,6 +916,23 @@ export default {
                     }), {
                         headers: { 'Content-Type': 'application/json' }
                     });
+                }
+
+                // 可选：指定保存路径（覆盖式更新，URL 保持不变）。
+                // 不传 path 时自动生成随机路径
+                let customPath = null;
+                if (rawPath !== null && rawPath !== undefined) {
+                    const validated = validateCustomPath(rawPath, file.name);
+                    if (!validated.ok) {
+                        return new Response(JSON.stringify({
+                            ok: false,
+                            message: '路径不合法: ' + validated.error
+                        }), {
+                            status: 400,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+                    customPath = validated.path;
                 }
 
                 // 上传文件到 R2
@@ -930,36 +948,7 @@ export default {
                     const extractedExt = file.name.split('.').pop().toLowerCase();
                     if (extractedExt && extractedExt.length > 0 && extractedExt.length < 10) {
                         fileExt = extractedExt;
-                        // 尝试根据扩展名设置MIME类型
-                        const mimeTypes = {
-                            'jpg': 'image/jpeg',
-                            'jpeg': 'image/jpeg',
-                            'png': 'image/png',
-                            'gif': 'image/gif',
-                            'webp': 'image/webp',
-                            'svg': 'image/svg+xml',
-                            'pdf': 'application/pdf',
-                            'doc': 'application/msword',
-                            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            'xls': 'application/vnd.ms-excel',
-                            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            'ppt': 'application/vnd.ms-powerpoint',
-                            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                            'zip': 'application/zip',
-                            'rar': 'application/x-rar-compressed',
-                            '7z': 'application/x-7z-compressed',
-                            'mp3': 'audio/mpeg',
-                            'mp4': 'video/mp4',
-                            'avi': 'video/x-msvideo',
-                            'mov': 'video/quicktime',
-                            'txt': 'text/plain',
-                            'html': 'text/html',
-                            'css': 'text/css',
-                            'js': 'application/javascript',
-                            'json': 'application/json',
-                            'xml': 'application/xml',
-                        };
-                        mimeType = mimeTypes[fileExt] || file.type || 'application/octet-stream';
+                        mimeType = MIME_TYPES[fileExt] || file.type || 'application/octet-stream';
                     }
                 } else {
                     // 如果没有文件名，尝试检测图片类型
@@ -970,11 +959,25 @@ export default {
                     }
                 }
 
-                // 生成文件路径
-                const date = new Date();
-                const formattedDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
-                const shortUUID = crypto.randomUUID().split('-')[0];
-                const key = `web/${formattedDate}/${shortUUID}.${fileExt}`;
+                // 指定了保存路径时，以路径中的扩展名为准（覆盖场景下 URL 类型由路径决定）
+                if (customPath) {
+                    const pathExt = customPath.split('.').pop().toLowerCase();
+                    if (pathExt && pathExt.length > 0 && pathExt.length < 10) {
+                        fileExt = pathExt;
+                        mimeType = MIME_TYPES[pathExt] || file.type || 'application/octet-stream';
+                    }
+                }
+
+                // 生成文件路径：指定了 path 则覆盖式写入该路径，否则自动生成
+                let key;
+                if (customPath) {
+                    key = customPath;
+                } else {
+                    const date = new Date();
+                    const formattedDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+                    const shortUUID = crypto.randomUUID().split('-')[0];
+                    key = `web/${formattedDate}/${shortUUID}.${fileExt}`;
+                }
 
                 // 上传到R2
                 await env[BUCKET_NAME].put(key, buffer, {
@@ -1102,6 +1105,61 @@ export default {
 };
 
 // ========== 工具函数 ==========
+
+// 扩展名 → MIME 类型映射
+const MIME_TYPES = {
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'svg': 'image/svg+xml',
+    'pdf': 'application/pdf',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'ppt': 'application/vnd.ms-powerpoint',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'zip': 'application/zip',
+    'rar': 'application/x-rar-compressed',
+    '7z': 'application/x-7z-compressed',
+    'mp3': 'audio/mpeg',
+    'mp4': 'video/mp4',
+    'avi': 'video/x-msvideo',
+    'mov': 'video/quicktime',
+    'txt': 'text/plain',
+    'html': 'text/html',
+    'css': 'text/css',
+    'js': 'application/javascript',
+    'json': 'application/json',
+    'xml': 'application/xml',
+};
+
+// 校验并规范化用户指定的保存路径（覆盖式更新用）
+// 返回 { ok: true, path } 或 { ok: false, error }
+function validateCustomPath(rawPath, originalName) {
+    let p = String(rawPath || '').trim();
+    if (!p) return { ok: false, error: '路径为空' };
+    // 折叠连续斜杠
+    p = p.replace(/\/+/g, '/');
+    if (p.length > 500) return { ok: false, error: '路径过长（最多 500 字符）' };
+    if (p.includes('..')) return { ok: false, error: '路径不允许包含 ".."' };
+    if (p.startsWith('/') || /^[a-zA-Z]:/.test(p)) return { ok: false, error: '路径不允许为绝对路径' };
+    if (!/^[a-zA-Z0-9._\/-]+$/.test(p)) return { ok: false, error: '路径只允许字母、数字及 . _ - / 字符' };
+    if (p.split('/').some(seg => seg.startsWith('.'))) return { ok: false, error: '路径段不允许以 "." 开头' };
+
+    // 未指定扩展名时，沿用原文件的扩展名
+    const lastSeg = p.split('/').pop();
+    if (!lastSeg.includes('.')) {
+        const originalExt = (originalName || '').split('.').pop();
+        if (originalExt && originalExt.length > 0 && originalExt.length < 10) {
+            p += '.' + originalExt.toLowerCase();
+        }
+    }
+    return { ok: true, path: p };
+}
+
 function detectImageType(uint8Array) {
     // JPEG检测
     if (uint8Array.length >= 3 &&
