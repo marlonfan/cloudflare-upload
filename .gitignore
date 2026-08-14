@@ -8,5 +8,8 @@ node_modules
 !.env.example
 .dev.vars
 
+# 本地测试残留（wrangler r2 object get 可能落盘）
+dsh-test/
+
 # macOS
 .DS_Store
