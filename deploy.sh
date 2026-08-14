@@ -41,7 +41,10 @@ cmd_secrets() {
     require_login
     local tmp
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' EXIT
+    # 注意: trap 在脚本退出时才执行，此时函数内 local 变量已失效，
+    # 所以用全局变量 SECRETS_TMP 保存路径供 trap 使用
+    SECRETS_TMP="$tmp"
+    trap 'rm -f "$SECRETS_TMP"' EXIT
 
     for key in "${SECRET_KEYS[@]}"; do
         if [[ -z "${!key:-}" ]]; then
@@ -105,10 +108,16 @@ cmd_doctor() {
 }
 
 case "${1:-deploy}" in
-    dev)      shift; cmd_dev "$@" ;;
+    dev)
+        if [[ $# -gt 0 ]]; then shift; fi
+        cmd_dev "$@"
+        ;;
     secrets)  cmd_secrets ;;
     doctor)   cmd_doctor ;;
-    deploy)   shift; cmd_deploy "$@" ;;
+    deploy)
+        if [[ $# -gt 0 ]]; then shift; fi
+        cmd_deploy "$@"
+        ;;
     *)
         echo "用法: $0 [deploy|secrets|dev|doctor]" >&2
         exit 1
