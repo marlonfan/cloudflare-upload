@@ -50,15 +50,15 @@ python3 ~/.claude/skills/cf-file-upload/scripts/upload_file.py /tmp/smoke.txt
 ## 能力一览
 
 ```shell
-# 上传（自动生成随机路径，返回 global/china 双链接）
+# 上传（脚本自动生成 uploads/YYYYMMDD/随机路径）
 python3 scripts/upload_file.py /path/to/file.png
 
-# 指定路径上传 / 覆盖更新（URL 不变）
+# 指定路径上传 / 覆盖更新（自动限制在 uploads/ 下）
 python3 scripts/upload_file.py --path avatar.png /path/to/new.png
 
 # 删除文件（支持 key 或完整 URL）
-python3 scripts/upload_file.py --delete avatar.png
-python3 scripts/upload_file.py --delete https://static.zhire.de/blog/cover.jpg
+python3 scripts/upload_file.py --delete uploads/avatar.png
+python3 scripts/upload_file.py --delete https://static.zhire.de/uploads/blog/cover.jpg
 
 # 机器可读输出
 python3 scripts/upload_file.py --format json /path/to/file

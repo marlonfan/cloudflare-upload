@@ -34,20 +34,25 @@ python3 ./.claude/skills/cf-file-upload/scripts/init_config.py
 ## 用法
 
 ```bash
-# 上传（自动生成随机路径，返回 global/china 双链接）
+# 上传（脚本自动生成 uploads/YYYYMMDD/随机路径）
 python3 scripts/upload_file.py /path/to/file.png
 
-# 指定路径上传 / 覆盖更新（URL 不变，无扩展名自动补原文件扩展名）
+# 指定路径上传 / 覆盖更新（自动限制在 uploads/ 下）
 python3 scripts/upload_file.py --path avatar.png /path/to/new.png
 python3 scripts/upload_file.py --path blog/cover.jpg /path/to/cover.jpg
 
 # 删除文件（支持 key 或完整 URL）
-python3 scripts/upload_file.py --delete avatar.png
-python3 scripts/upload_file.py --delete https://static.zhire.de/blog/cover.jpg
+python3 scripts/upload_file.py --delete uploads/avatar.png
+python3 scripts/upload_file.py --delete https://static.zhire.de/uploads/blog/cover.jpg
 
 # 机器可读输出
 python3 scripts/upload_file.py --format json /path/to/file
 ```
+
+普通上传和指定路径上传都会收口到 `uploads/`。例如 `--path blog/cover.jpg`
+实际写入 `uploads/blog/cover.jpg`。覆盖后对象 key 不变，但返回链接会携带新的
+`?v=` 参数，用来绕过 CDN/浏览器旧缓存。此目录规则只属于 Skill/脚本，
+不会改变网页上传或 Telegram 机器人的目录。
 
 ## 文件结构
 

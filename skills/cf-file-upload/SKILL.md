@@ -54,32 +54,39 @@ Upload multiple files by passing multiple paths:
 python3 scripts/upload_file.py /path/a.png /path/report.pdf
 ```
 
+All uploads made through this script are stored below `uploads/`. Without
+`--path`, the script generates `uploads/YYYYMMDD/<random>.<ext>` for each file.
+This restriction applies only to this Skill/script; it does not change the web
+upload page or Telegram bot directories.
+
 ### Overwrite a specific path (指定路径覆盖更新)
 
-Pass `--path` to save the file at a fixed path and overwrite any existing object there (the public URL stays the same). Use this when the user asks to update/replace an existing image or file in place:
+Pass `--path` to save the file at a fixed key and overwrite any existing object there. The script automatically scopes the path below `uploads/`:
 
 ```bash
 python3 scripts/upload_file.py --path avatar.png /path/to/new.png
 python3 scripts/upload_file.py --path blog/cover.jpg /path/to/cover.jpg
 ```
 
-- The path may contain subdirectories (`blog/cover.jpg`).
+- `--path avatar.png` becomes `uploads/avatar.png`; `uploads/avatar.png` is not double-prefixed.
+- The path may contain subdirectories, but they always remain below `uploads/`.
 - If the path has no extension, the original file's extension is appended automatically (e.g. `--path avatar` with a PNG becomes `avatar.png`).
 - Paths must be relative and use only letters, digits, `.`, `_`, `-`, `/`; traversal (`..`) and absolute paths are rejected by the worker.
-- Without `--path`, a random `web/YYYYMMDD/<uuid>.<ext>` path is generated as before.
+- Each overwrite returns global/China URLs with a new shared `?v=` value. Always return the newly printed URL so CDN/browser caches cannot reuse the previous body. The underlying R2 key remains stable.
 - The environment variable `CF_FILE_UPLOAD_PATH` can be used instead of `--path`.
+- A fixed path can only be used with one file per invocation.
 
 ### Delete files (删除文件)
 
 Pass `--delete` to remove objects from the worker instead of uploading. The positional arguments are treated as keys or full URLs:
 
 ```bash
-python3 scripts/upload_file.py --delete avatar.png
-python3 scripts/upload_file.py --delete https://static.zhire.de/blog/cover.jpg
+python3 scripts/upload_file.py --delete uploads/avatar.png
+python3 scripts/upload_file.py --delete https://static.zhire.de/uploads/blog/cover.jpg
 python3 scripts/upload_file.py --delete blog/old-a.png blog/old-b.png
 ```
 
-- Accepts either a bare key (`avatar.png`) or a full service URL (the path is extracted automatically).
+- Accepts either a bare key (`uploads/avatar.png`) or a full service URL. Legacy keys outside `uploads/` can still be deleted for cleanup.
 - Deleting keeps the URL returning 404 afterwards; use when the user asks to remove a file, take down a link, or clean up.
 - The web upload page also shows a delete button next to each uploaded file.
 

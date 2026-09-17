@@ -35,16 +35,19 @@ npx skills use marlonfan/cloudflare-upload@cf-file-upload
 ## 🛠️ Skill 能力
 
 ```bash
-# 上传（自动生成随机路径）
+# Skill/脚本上传（自动生成 uploads/YYYYMMDD/随机路径）
 python3 scripts/upload_file.py /path/to/file.png
 
-# 指定路径上传 / 覆盖更新（URL 不变）
+# 指定路径上传 / 覆盖更新（自动限制在 uploads/ 下）
 python3 scripts/upload_file.py --path avatar.png /path/to/new.png
 
 # 删除文件（key 或完整 URL）
-python3 scripts/upload_file.py --delete avatar.png
-python3 scripts/upload_file.py --delete https://static.zhire.de/blog/cover.jpg
+python3 scripts/upload_file.py --delete uploads/avatar.png
+python3 scripts/upload_file.py --delete https://static.zhire.de/uploads/blog/cover.jpg
 ```
+
+Skill/脚本上传统一使用 `uploads/`；网页默认目录仍为 `web/`，Telegram 默认目录仍为 `tg/`。
+指定路径覆盖后会返回带新 `?v=` 的链接，避免 CDN 或浏览器继续命中旧版本。
 
 ## 🚀 部署（服务提供者）
 

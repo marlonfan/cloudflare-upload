@@ -8,8 +8,10 @@ import http.cookiejar
 import json
 import mimetypes
 import os
+import re
 import secrets
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib import error, parse, request
 
@@ -19,6 +21,43 @@ DEFAULT_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0.0.0 Safari/537.36"
 )
+UPLOAD_ROOT = "uploads"
+
+
+def normalize_upload_path(path: str) -> str:
+    """Validate a custom object path and keep it below uploads/."""
+    value = str(path or "").strip()
+    value = re.sub(r"/+", "/", value)
+    if not value:
+        raise ValueError("Upload path cannot be empty")
+    if ".." in value:
+        raise ValueError('Upload path cannot contain ".."')
+    if value.startswith("/") or re.match(r"^[a-zA-Z]:", value):
+        raise ValueError("Upload path must be relative")
+    if not re.fullmatch(r"[a-zA-Z0-9._/-]+", value):
+        raise ValueError("Upload path contains unsupported characters")
+    if any(segment.startswith(".") for segment in value.split("/")):
+        raise ValueError('Upload path segments cannot start with "."')
+    if value == UPLOAD_ROOT or value.endswith("/"):
+        raise ValueError("Upload path must include a file name")
+    scoped = value if value.startswith(f"{UPLOAD_ROOT}/") else f"{UPLOAD_ROOT}/{value}"
+    if len(scoped) > 500:
+        raise ValueError("Upload path is too long (maximum: 500 characters)")
+    return scoped
+
+
+def generate_upload_path(
+    file_path: Path,
+    now: datetime | None = None,
+    token: str | None = None,
+) -> str:
+    """Generate a dated path for a Skill/script upload."""
+    date = (now or datetime.now()).strftime("%Y%m%d")
+    unique = token or secrets.token_hex(4)
+    suffix = file_path.suffix.lower().lstrip(".")
+    if not re.fullmatch(r"[a-z0-9]{1,9}", suffix):
+        suffix = "bin"
+    return f"{UPLOAD_ROOT}/{date}/{unique}.{suffix}"
 
 
 def default_config_path() -> Path:
@@ -173,7 +212,8 @@ def plain_output(results: list[dict]) -> str:
             lines.append(f"china: {data['chinaUrl']}")
             lines.append(f"markdown_china: {markdown_for(file_path, data['chinaUrl'])}")
         if data.get("key"):
-            lines.append(f"deleted: {data['key']}")
+            label = "key" if data.get("globalUrl") else "deleted"
+            lines.append(f"{label}: {data['key']}")
         if data.get("message") and not data.get("globalUrl"):
             lines.append(f"message: {data['message']}")
         chunks.append("\n".join(lines))
@@ -186,7 +226,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=default_config_path(), help="Config file path")
     parser.add_argument("--base-url", help="Override Worker base URL")
     parser.add_argument("--password", help="Override upload password")
-    parser.add_argument("--path", help="Save path on the worker (overwrite existing file, e.g. avatar.png or blog/cover.jpg). Auto-appends original extension if omitted")
+    parser.add_argument("--path", help="Save path below uploads/ (overwrite existing file, e.g. avatar.png or blog/cover.jpg). Auto-appends original extension if omitted")
     parser.add_argument("--delete", action="store_true", help="Delete files by key or URL instead of uploading (files argument is treated as keys/URLs)")
     parser.add_argument("--user-agent", help="Override the browser-like User-Agent header")
     parser.add_argument("--format", choices=["plain", "json"], default="plain")
@@ -196,6 +236,10 @@ def main() -> int:
     base_url = (args.base_url or config.get("base_url") or "").rstrip("/")
     password = args.password or os.environ.get("CF_FILE_UPLOAD_PASSWORD") or config.get("password")
     path = args.path or os.environ.get("CF_FILE_UPLOAD_PATH") or None
+    if path and not args.delete:
+        path = normalize_upload_path(path)
+        if len(args.files) > 1:
+            parser.error("--path/CF_FILE_UPLOAD_PATH can only be used with one file")
     user_agent = (
         args.user_agent
         or os.environ.get("CF_FILE_UPLOAD_USER_AGENT")
@@ -221,7 +265,8 @@ def main() -> int:
     else:
         for file_path in args.files:
             resolved = file_path.expanduser()
-            data = upload_one(opener, base_url, resolved, user_agent, path=path)
+            upload_path = path or generate_upload_path(resolved)
+            data = upload_one(opener, base_url, resolved, user_agent, path=upload_path)
             results.append({"file": str(resolved), "response": data})
 
     if args.format == "json":

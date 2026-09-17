@@ -453,7 +453,7 @@ function getUploadHTML() {
         <div class="paste-hint">💡 提示：可以使用 Ctrl+V (Mac: Cmd+V) 直接粘贴图片</div>
 
         <input type="text" class="path-input" id="savePath" placeholder="保存路径（可选）如: avatar.png 或 blog/cover.jpg">
-        <div class="path-hint">填写路径后将覆盖该路径下的旧文件（URL 不变）；留空则自动生成随机路径</div>
+        <div class="path-hint">填写路径后将覆盖该路径下的旧文件并返回带新版本号的链接；留空则自动生成随机路径</div>
 
         <input type="file" id="fileInput" multiple>
 
@@ -742,7 +742,7 @@ function getUploadHTML() {
             }
 
             // 删除按钮（从 URL 提取 key）
-            const key = (data.globalUrl || '').replace(/^https?:\/\/[^/]+\//, '');
+            const key = data.key || (data.globalUrl || '').replace(/^https?:\/\/[^/]+\//, '').split('?', 1)[0];
             if (key) {
                 html += '<button class="delete-btn" onclick="deleteFile(this, \'' + key + '\')">🗑️ 删除</button>';
             }
@@ -1039,11 +1039,18 @@ export default {
 
                 // 上传到R2
                 await env[BUCKET_NAME].put(key, buffer, {
-                    httpMetadata: { contentType: mimeType }
+                    httpMetadata: {
+                        contentType: mimeType,
+                        ...(customPath ? { cacheControl: 'no-cache, must-revalidate' } : {})
+                    }
                 });
 
-                const globalUrl = `${BASE_CF_URL}/${key}`;
-                const chinaUrl = `${BASE_URL}/${key}`;
+                // 固定路径覆盖后生成同一版本参数，让两个 CDN 域名都绕过旧缓存。
+                // R2 key 保持不变，只有返回给调用方的链接版本会更新。
+                const cacheVersion = customPath ? crypto.randomUUID().replaceAll('-', '') : null;
+                const versionQuery = cacheVersion ? `?v=${cacheVersion}` : '';
+                const globalUrl = `${BASE_CF_URL}/${key}${versionQuery}`;
+                const chinaUrl = `${BASE_URL}/${key}${versionQuery}`;
 
                 // 发送 Telegram 通知
                 try {
@@ -1064,6 +1071,8 @@ export default {
                 return new Response(JSON.stringify({
                     ok: true,
                     message: '上传成功',
+                    key: key,
+                    version: cacheVersion,
                     globalUrl: globalUrl,
                     chinaUrl: chinaUrl
                 }), {

@@ -2,10 +2,12 @@
     "name": "image",
     "version": "1.0.0",
     "description": "Cloudflare Worker for uploading files to S3",
+    "type": "module",
     "main": "worker.js",
     "scripts": {
         "deploy": "wrangler deploy",
-        "dev": "wrangler dev"
+        "dev": "wrangler dev",
+        "test": "node --test test/worker.test.js && python3 -m unittest test/upload_file_test.py"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.0.0"
